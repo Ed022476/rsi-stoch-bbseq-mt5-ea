@@ -6,12 +6,9 @@
 
 #property copyright "Converted EA"
 #property link      ""
-#property version   "1.05"
+#property version   "1.06"
 #property strict
 #property description "RSI+StochRSI EA with Bollinger Band sequence filter"
-
-//--- Tell MT5 this is an Expert Advisor, not a script
-#property service
 
 #include <Trade\Trade.mqh>
 
@@ -158,6 +155,14 @@ int OnInit()
     }
     
     Print("EA initialized on ", Symbol(), " monitoring ", CompareSymbol, " @ ", EnumToString(CompareTF));
+    
+    // Scan historical signals after initialization
+    if (PlotHistoricalSignals && !historicalSignalsPlotted)
+    {
+        ScanAndPlotHistoricalSignals();
+        historicalSignalsPlotted = true;
+    }
+    
     return INIT_SUCCEEDED;
 }
 
@@ -181,13 +186,6 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-    // Plot historical signals once on first tick
-    if (PlotHistoricalSignals && !historicalSignalsPlotted)
-    {
-        ScanAndPlotHistoricalSignals();
-        historicalSignalsPlotted = true;
-    }
-    
     // Validate bar counts
     if (Bars(CompareSymbol, CompareTF) < BBSeqLookback + 10)
         return;
