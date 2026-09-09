@@ -6,7 +6,7 @@
 
 #property copyright "Converted EA"
 #property link      ""
-#property version   "1.06"
+#property version   "1.07"
 #property strict
 #property description "RSI+StochRSI EA with Bollinger Band sequence filter"
 
@@ -78,6 +78,8 @@ input bool CloseOppositeSide = true;            // Close opposite position on ne
 
 input bool PlotHistoricalSignals = true;        // Plot historical signals on chart load
 input int HistoricalBarsToScan = 500;           // Number of bars to scan for historical signals
+
+input bool EnableDebugLogging = false;          // Enable detailed debug logging for signal matching
 
 //+------------------------------------------------------------------+
 //| GLOBAL VARIABLES                                                 |
@@ -193,34 +195,48 @@ void OnTick()
     if (!UpdateIndicators())
         return;
     
-    // Get current values from remote timeframe (index 1 = confirmed bar)
-    double rsi_remote = buffer_rsi_remote[1];
-    double rsi_remote_ma = buffer_rsi_ma_remote[1];
-    double stoch_k = buffer_stoch_k[1];
-    double stoch_d = buffer_stoch_d[1];
-    double stoch_k_prev = buffer_stoch_k[2];
-    double stoch_d_prev = buffer_stoch_d[2];
+    // Get current values from remote timeframe
+    // Index 0 = current (forming) bar, Index 1 = previous (confirmed) bar
+    double rsi_remote = buffer_rsi_remote[0];
+    double rsi_remote_ma = buffer_rsi_ma_remote[0];
+    double stoch_k = buffer_stoch_k[0];
+    double stoch_d = buffer_stoch_d[0];
+    double stoch_k_prev = buffer_stoch_k[1];
+    double stoch_d_prev = buffer_stoch_d[1];
     double stoch_kd_diff = stoch_k - stoch_d;
     
-    double remote_close = buffer_close_remote[1];
-    double remote_high = buffer_high_remote[1];
-    double remote_low = buffer_low_remote[1];
+    double remote_close = buffer_close_remote[0];
+    double remote_high = buffer_high_remote[0];
+    double remote_low = buffer_low_remote[0];
     
-    // Detect crossovers
-    bool rawCrossUp = (stoch_k > stoch_d) && (stoch_k_prev <= stoch_d_prev);
-    bool rawCrossDown = (stoch_k < stoch_d) && (stoch_k_prev >= stoch_d_prev);
+    // Detect crossovers on previous confirmed bar (index 1)
+    double stoch_k_bar1 = buffer_stoch_k[1];
+    double stoch_d_bar1 = buffer_stoch_d[1];
+    double stoch_k_bar2 = buffer_stoch_k[2];
+    double stoch_d_bar2 = buffer_stoch_d[2];
     
-    // Apply min K-D diff filter
-    bool remoteCrossUp = rawCrossUp && (stoch_kd_diff >= MinStochDiff);
-    bool remoteCrossDown = rawCrossDown && ((-stoch_kd_diff) >= MinStochDiff);
+    bool rawCrossUp = (stoch_k_bar1 > stoch_d_bar1) && (stoch_k_bar2 <= stoch_d_bar2);
+    bool rawCrossDown = (stoch_k_bar1 < stoch_d_bar1) && (stoch_k_bar2 >= stoch_d_bar2);
     
-    // Check RSI vs MA
-    bool rsi_lt_ma = rsi_remote < rsi_remote_ma;
-    bool rsi_gt_ma = rsi_remote > rsi_remote_ma;
+    // Apply min K-D diff filter using confirmed bar
+    double stoch_kd_diff_bar1 = stoch_k_bar1 - stoch_d_bar1;
+    bool remoteCrossUp = rawCrossUp && (stoch_kd_diff_bar1 >= MinStochDiff);
+    bool remoteCrossDown = rawCrossDown && ((-stoch_kd_diff_bar1) >= MinStochDiff);
+    
+    // Check RSI vs MA on confirmed bar
+    bool rsi_lt_ma = buffer_rsi_remote[1] < buffer_rsi_ma_remote[1];
+    bool rsi_gt_ma = buffer_rsi_remote[1] > buffer_rsi_ma_remote[1];
     
     // Base signal conditions
-    bool buyRaw = remoteCrossUp && rsi_lt_ma && (stoch_k < StochBuyThresh);
-    bool sellRaw = remoteCrossDown && rsi_gt_ma && (stoch_k > StochSellThresh);
+    bool buyRaw = remoteCrossUp && rsi_lt_ma && (stoch_k_bar1 < StochBuyThresh);
+    bool sellRaw = remoteCrossDown && rsi_gt_ma && (stoch_k_bar1 > StochSellThresh);
+    
+    if (EnableDebugLogging && (buyRaw || sellRaw))
+    {
+        Print("Signal detected - Buy: ", buyRaw, " Sell: ", sellRaw,
+              " K[1]: ", stoch_k_bar1, " D[1]: ", stoch_d_bar1,
+              " RSI[1]: ", buffer_rsi_remote[1], " RSIMA[1]: ", buffer_rsi_ma_remote[1]);
+    }
     
     // Quality filters
     bool qualityPass = CheckQualityFilters();
@@ -229,7 +245,7 @@ void OnTick()
     bool bbPassBuy = true, bbPassSell = true;
     if (BBMode != BB_OFF)
     {
-        CheckBollingerBandPass(remote_close, remote_high, remote_low, bbPassBuy, bbPassSell);
+        CheckBollingerBandPass(buffer_close_remote[1], buffer_high_remote[1], buffer_low_remote[1], bbPassBuy, bbPassSell);
     }
     
     // Final signal with all filters
@@ -256,14 +272,14 @@ void OnTick()
     // Execute trades
     if (buySignal)
     {
-        PlotBuySignal(remote_close);
-        ExecuteBuySignal(remote_close);
+        PlotBuySignal(buffer_close_remote[1]);
+        ExecuteBuySignal(buffer_close_remote[1]);
     }
     
     if (sellSignal)
     {
-        PlotSellSignal(remote_close);
-        ExecuteSellSignal(remote_close);
+        PlotSellSignal(buffer_close_remote[1]);
+        ExecuteSellSignal(buffer_close_remote[1]);
     }
 }
 
@@ -286,7 +302,7 @@ void ScanAndPlotHistoricalSignals()
         if (!UpdateIndicatorsForBar(barIdx))
             continue;
         
-        // Get values
+        // Get values for current bar and previous bars
         double rsi_remote = buffer_rsi_remote[0];
         double rsi_remote_ma = buffer_rsi_ma_remote[0];
         double stoch_k = buffer_stoch_k[0];
